@@ -1,0 +1,6 @@
+episode_id,success,spl,dtg,steps,recovery_count,recovery_improved
+hm3d_val_00001,1,0.45,0.00,87,0,0
+hm3d_val_00002,0,0.00,3.21,200,2,1
+hm3d_val_00003,1,0.62,0.00,54,1,1
+hm3d_val_00004,0,0.00,5.67,200,3,2
+hm3d_val_00005,1,0.38,0.00,112,0,0

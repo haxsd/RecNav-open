@@ -1,0 +1,10 @@
+# Core dependencies (habitat-sim and habitat-lab must be installed separately)
+numpy
+opencv-python
+torch
+torchvision
+tqdm
+openai>=1.0.0
+imageio
+matplotlib
+scipy

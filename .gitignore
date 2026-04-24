@@ -1,0 +1,25 @@
+# Environment and secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Data and checkpoints (too large for git)
+data/
+pixnav/checkpoints/*.pth
+pixnav/checkpoints/bert-base-uncased/
+
+# Runtime outputs
+logs/
+artifacts/runs/
+pixnav/tmp/
+pixnav/hm3d_eval_trajectory/
+outputs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
