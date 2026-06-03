@@ -67,6 +67,49 @@ def append_metric_row(metric: dict[str, object], path: Path) -> None:
         writer.writerow(metric)
 
 
+def load_completed_episode_rows(path: Path, eval_episodes: int) -> tuple[set[int], list[dict[str, object]]]:
+    if not path.exists() or path.stat().st_size == 0:
+        return set(), []
+
+    completed: set[int] = set()
+    rows: list[dict[str, object]] = []
+    with path.open(mode="r", newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            try:
+                episode_idx = int(str(row.get("episode_idx", "")).strip())
+            except ValueError:
+                continue
+            if 0 <= episode_idx < eval_episodes and episode_idx not in completed:
+                completed.add(episode_idx)
+                rows.append(dict(row))
+    return completed, rows
+
+
+def prune_telemetry_to_completed_episodes(telemetry_dir: Path, completed_episode_indices: set[int]) -> None:
+    if not telemetry_dir.exists() or not completed_episode_indices:
+        return
+
+    for name in ("step_trace.jsonl", "episode_summary.jsonl", "events.jsonl", "memory_snapshot.jsonl"):
+        path = telemetry_dir / name
+        if not path.exists():
+            continue
+        kept: list[str] = []
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    payload = json.loads(line)
+                    episode_idx = payload.get("episode_idx")
+                    keep_line = episode_idx is None or int(episode_idx) in completed_episode_indices
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    keep_line = True
+                if keep_line:
+                    kept.append(line)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text("".join(kept), encoding="utf-8")
+        tmp_path.replace(path)
+
+
 def adjust_topdown(metrics: dict[str, object]) -> np.ndarray:
     return cv2.cvtColor(colorize_draw_agent_and_fit_to_height(metrics["top_down_map"], 1024), cv2.COLOR_BGR2RGB)
 
@@ -310,6 +353,34 @@ def composite_score(candidate: dict, dtg_before: float) -> float:
         + _W_BRANCH * branch
         + _W_BLOCKED * blocked
         + _W_COLLISION * collided
+    )
+
+
+def proxy_score(candidate: dict) -> float:
+    """Non-oracle ranking using only memory and collision signals. Lower = better.
+
+    Replaces DTG-based composite_score when simulator progress feedback
+    is unavailable.  Rewards novelty (unexplored edges, high branch degree)
+    and penalises revisiting and collisions.
+    """
+    _W_VISIT = 0.40
+    _W_COLLISION = 0.80
+    _W_UNEXPLORED = -0.30
+    _W_BRANCH = -0.15
+    _W_BLOCKED = 0.25
+
+    visit = min(float(candidate.get("visit_count", 0)), 8.0) / 8.0
+    collided = float(candidate.get("collided", False))
+    unexplored = min(float(candidate.get("unexplored_edges", 0)), 4.0) / 4.0
+    branch = min(float(candidate.get("degree", 0)), 6.0) / 6.0
+    blocked = min(float(candidate.get("blocked_edges", 0)), 4.0) / 4.0
+
+    return (
+        _W_VISIT * visit
+        + _W_COLLISION * collided
+        + _W_UNEXPLORED * unexplored
+        + _W_BRANCH * branch
+        + _W_BLOCKED * blocked
     )
 
 
@@ -717,6 +788,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["current_node", "anchor_frontier", "skeleton_frontier", "query_aware_subgraph", "query_aware_edge_pool"],
     )
     parser.add_argument(
+        "--progress_signal",
+        type=str,
+        default="oracle",
+        choices=["oracle", "proxy", "none"],
+        help="Progress signal for recovery: oracle=simulator DTG (default), proxy=memory-visual signals only, none=random ranking",
+    )
+    parser.add_argument(
         "--gate_mode",
         type=str,
         default="legacy_stop_signal",
@@ -786,6 +864,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Force STOP when DTG < this value (0=disabled). Eliminates GroundingDINO false-negative near-misses.")
     parser.add_argument("--episode_seed", type=int, default=-1,
                         help="Seed for Habitat episode sampling (-1=use --seed). Separate from --seed to fix episode set across variants.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Keep existing CSV rows and skip completed episode_idx values after env.reset().")
     return parser
 
 
@@ -797,10 +877,19 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = Path(args.csv_path)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    if csv_path.exists():
+    completed_episode_indices: set[int] = set()
+    existing_episode_rows: list[dict[str, object]] = []
+    if args.resume:
+        completed_episode_indices, existing_episode_rows = load_completed_episode_rows(csv_path, int(args.eval_episodes))
+        if completed_episode_indices:
+            print(
+                f"[resume] loaded {len(completed_episode_indices)} completed episodes "
+                f"from {csv_path}; remaining={max(0, int(args.eval_episodes) - len(completed_episode_indices))}"
+            )
+    elif csv_path.exists():
         csv_path.unlink()
     planner_trace_path = Path(args.planner_trace_path) if args.planner_trace_path else None
-    if planner_trace_path is not None and not args.replay_planner_trace and planner_trace_path.exists():
+    if planner_trace_path is not None and not args.replay_planner_trace and planner_trace_path.exists() and not args.resume:
         planner_trace_path.unlink()
     replay_trace_by_ep = load_planner_trace(planner_trace_path) if args.replay_planner_trace and planner_trace_path else None
     if replay_trace_by_ep is not None:
@@ -842,9 +931,11 @@ def main() -> int:
         enable_debug_images=False,
     )
     telemetry_enabled = bool(args.monitor_only or args.export_telemetry)
-    logger = MetricsLogger(output_dir / "telemetry") if telemetry_enabled else None
-    episode_rows_written: list[dict[str, object]] = []
-    seen_scenes: set[str] = set()
+    if telemetry_enabled and args.resume:
+        prune_telemetry_to_completed_episodes(output_dir / "telemetry", completed_episode_indices)
+    logger = MetricsLogger(output_dir / "telemetry", append=args.resume) if telemetry_enabled else None
+    episode_rows_written: list[dict[str, object]] = list(existing_episode_rows)
+    seen_scenes: set[str] = {str(row.get("scene_id", "")) for row in existing_episode_rows if row.get("scene_id")}
     effective_call_budget = normalize_optional_int_cap(int(args.call_budget))
     budget_manager = BudgetManager(
         BudgetCaps(
@@ -896,6 +987,9 @@ def main() -> int:
             episode = habitat_env.current_episode
             episode_id = str(episode.episode_id)
             scene_id = str(episode.scene_id)
+            if episode_idx in completed_episode_indices:
+                print(f"[resume] skip completed episode_idx={episode_idx} episode_id={episode_id}")
+                continue
             episode_dir = output_dir / f"trajectory_{episode_idx}"
             if args.save_rgb_video or args.save_topdown_video:
                 episode_dir.mkdir(parents=True, exist_ok=True)
@@ -1158,6 +1252,8 @@ def main() -> int:
                         window=int(args.gate_failure_window),
                         progress_epsilon=float(args.gate_progress_epsilon),
                     )
+                    if str(args.progress_signal) != "oracle":
+                        failure_opportunity = False
                     if failure_opportunity:
                         gate_stats["failure_opportunity_count"] += 1
                     collision_ratio = compute_collision_ratio(collision_history, int(args.gate_failure_window))
@@ -1478,7 +1574,15 @@ def main() -> int:
                             # Phase 2: Probe all candidates via sim save/restore (no bookkeeping cost)
                             # Probe uses 1 forward step for direction selection only.
                             _macro_ranking = str(args.recovery_macro_ranking).strip().lower()
-                            _needs_memory = _macro_ranking in ("memory_dtg", "composite", "frontier_nearest")
+                            _progress_signal = str(args.progress_signal).strip().lower()
+                            if _progress_signal == "proxy":
+                                _macro_ranking = "proxy"
+                                _needs_memory = True
+                            elif _progress_signal == "none":
+                                _macro_ranking = "random"
+                                _needs_memory = True
+                            else:
+                                _needs_memory = _macro_ranking in ("memory_dtg", "composite", "frontier_nearest")
                             _probe_results = probe_macro_candidates(
                                 habitat_env, _fan_offsets,
                                 memory=memory if _needs_memory else None,
@@ -1495,6 +1599,11 @@ def main() -> int:
                                 _ranked = sorted(
                                     _probe_results,
                                     key=lambda r: composite_score(r, dtg_before),
+                                )
+                            elif _macro_ranking == "proxy":
+                                _ranked = sorted(
+                                    _probe_results,
+                                    key=lambda r: proxy_score(r),
                                 )
                             elif _macro_ranking == "frontier_nearest":
                                 _ranked = sorted(
@@ -1536,7 +1645,7 @@ def main() -> int:
                                     break
                                 _best = _available[0]
 
-                                if _macro_abstain_enabled and _best["dtg"] >= dtg_before:
+                                if _macro_abstain_enabled and _progress_signal == "oracle" and _best["dtg"] >= dtg_before:
                                     _macro_abstained = True
                                     _macro_winning_offset = -999
                                     break
@@ -1544,6 +1653,9 @@ def main() -> int:
                                 _target_offset = _best["offset"]
                                 _macro_winning_offset = _target_offset
                                 _macro_attempts += 1
+                                _attempt_start_pos = np.array(
+                                    habitat_env.sim.get_agent_state().position, dtype=np.float32
+                                )
 
                                 # Execute turns to winning direction
                                 _turn_id = _TURN_R if _target_offset > 0 else _TURN_L
@@ -1632,7 +1744,7 @@ def main() -> int:
                                                 "distance_to_goal", _cont_dtg_prev
                                             )
                                         )
-                                        if _cont_dtg_now > _cont_dtg_prev + 0.01:
+                                        if _progress_signal == "oracle" and _cont_dtg_now > _cont_dtg_prev + 0.01:
                                             break
                                         _cont_dtg_prev = _cont_dtg_now
 
@@ -1640,7 +1752,14 @@ def main() -> int:
                                 _attempt_dtg = float(
                                     habitat_env.get_metrics().get("distance_to_goal", dtg_before)
                                 )
-                                _attempt_improved = _attempt_dtg < dtg_before - 0.01
+                                if _progress_signal == "oracle":
+                                    _attempt_improved = _attempt_dtg < dtg_before - 0.01
+                                else:
+                                    _attempt_end_pos = np.array(
+                                        habitat_env.sim.get_agent_state().position, dtype=np.float32
+                                    )
+                                    _displacement = float(np.linalg.norm(_attempt_end_pos - _attempt_start_pos))
+                                    _attempt_improved = _displacement > 0.15 and not _fwd_collided
 
                                 if _attempt_improved:
                                     _macro_success = True
@@ -1674,6 +1793,8 @@ def main() -> int:
                                     random.shuffle(_ranked)
                                 elif _macro_ranking == "composite":
                                     _ranked = sorted(_probe_results, key=lambda r: composite_score(r, dtg_before))
+                                elif _macro_ranking == "proxy":
+                                    _ranked = sorted(_probe_results, key=lambda r: proxy_score(r))
                                 elif _macro_ranking == "frontier_nearest":
                                     _ranked = sorted(_probe_results, key=lambda r: (r.get("visit_count", 0), -r.get("unexplored_edges", 0), r["dtg"]))
                                 elif _macro_ranking == "memory_dtg":

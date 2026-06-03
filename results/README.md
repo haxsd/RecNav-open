@@ -1,8 +1,6 @@
-# Results
+# results
 
-This directory contains example result files to illustrate the output format.
+This directory contains only lightweight examples. Full experiment outputs are
+written under `artifacts/runs/experiments/` and are ignored by Git.
 
-- `example_results.csv` — Sample output showing the per-episode CSV format.
-
-After running experiments, results will be saved under `artifacts/runs/experiments/`.
-See `docs/reproduce.md` for instructions.
+`example_results.csv` documents the expected per-episode CSV shape.

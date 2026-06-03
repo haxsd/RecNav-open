@@ -122,7 +122,7 @@ class PixNavHost:
     def get_host_state(self) -> dict[str, Any]:
         return {
             "host_name": "pixnav_skill_only",
-            "host_version": "v1",
+            "host_version": "r14_stage2",
             "pixnav_dir": str(_PIXNAV_DIR),
             "checkpoint_path": str(self.checkpoint_path),
             "device": str(self.device),

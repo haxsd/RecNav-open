@@ -1,4 +1,4 @@
-"""RecNav core modules."""
+"""Core RecNav modules."""
 
 from .core import BudgetCaps, BudgetManager, CANONICAL_EVENT_TYPES, log_budget_snapshot_event, log_telemetry_event
 from .env_runner import HabitatEnvRunner, Position3D, StepResult

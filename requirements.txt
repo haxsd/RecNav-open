@@ -1,5 +1,6 @@
-# Core dependencies (habitat-sim and habitat-lab must be installed separately)
+# Install habitat-sim and habitat-lab separately for your platform.
 numpy
+numpy-quaternion
 opencv-python
 torch
 torchvision
@@ -8,3 +9,5 @@ openai>=1.0.0
 imageio
 matplotlib
 scipy
+pillow
+transformers

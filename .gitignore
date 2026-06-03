@@ -1,25 +1,36 @@
-# Environment and secrets
+# Secrets
 .env
+*.key
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
 
-# Data and checkpoints (too large for git)
+# Local environments
+.venv/
+venv/
+env/
+
+# Data, checkpoints, and generated outputs
 data/
-pixnav/checkpoints/*.pth
-pixnav/checkpoints/bert-base-uncased/
-
-# Runtime outputs
+pixnav/checkpoints/
 logs/
 artifacts/runs/
+outputs/
+figures/
 pixnav/tmp/
 pixnav/hm3d_eval_trajectory/
-outputs/
 
-# IDE
+# Third-party source trees installed locally
+pixnav/thirdparty/
+
+# IDE / OS
 .idea/
 .vscode/
 *.swp
+.DS_Store
+Thumbs.db

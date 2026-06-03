@@ -1,116 +1,88 @@
 #!/usr/bin/env python3
-"""
-Generate Budget-Performance curve (Figure 1) from experiment results.
-Plots SR and SPL vs step budget for F0 and AdaRec, with per-seed markers.
+"""Plot SR and SPL across step budgets from RecNav result CSV files."""
 
-Usage: python plot_budget_curve.py [--base /path/to/experiments] [--out figure1_budget.pdf]
-"""
+from __future__ import annotations
+
 import argparse
 import csv
+import re
+from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-BASE = Path(__file__).resolve().parents[2] / "artifacts" / "runs" / "experiments"
-SEEDS = [123, 231, 777]
-BUDGETS = [100, 200, 300, 400, 500]
+
+BUDGET_RE = re.compile(r"_s(\d+)$")
 
 
-def load_csv(path: str) -> list[dict]:
-    with open(path) as f:
+def load_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
-def get_metrics(variant: str, budget: int) -> dict:
-    """Return {seed: {SR, SPL}} for a variant at a given budget."""
-    results = {}
-    for seed in SEEDS:
-        if budget == 500:
-            p = BASE / variant / f"seed_{seed}" / "results.csv"
-        else:
-            p = BASE / f"{variant}_s{budget}" / f"seed_{seed}" / "results.csv"
-        if p.exists():
-            rows = load_csv(str(p))
-            n = len(rows)
-            sr = sum(float(r["success"]) for r in rows) / n
-            spl = sum(float(r["spl"]) for r in rows) / n
-            results[seed] = {"SR": sr, "SPL": spl}
-    return results
+def mean_metric(rows: list[dict[str, str]], name: str) -> float:
+    if not rows:
+        return float("nan")
+    return sum(float(r[name]) for r in rows) / len(rows)
 
 
-def plot_curve(metric: str, ax, f0_data, ar_data):
-    """Plot one metric (SR or SPL) on the given axes."""
-    f0_means, f0_stds, ar_means, ar_stds = [], [], [], []
-    valid_budgets = []
-
-    for b in BUDGETS:
-        f0_vals = [f0_data[b][s][metric] for s in SEEDS if s in f0_data.get(b, {})]
-        ar_vals = [ar_data[b][s][metric] for s in SEEDS if s in ar_data.get(b, {})]
-        if f0_vals and ar_vals:
-            valid_budgets.append(b)
-            f0_means.append(np.mean(f0_vals))
-            f0_stds.append(np.std(f0_vals))
-            ar_means.append(np.mean(ar_vals))
-            ar_stds.append(np.std(ar_vals))
-
-    if not valid_budgets:
-        ax.text(0.5, 0.5, "No data yet", ha="center", va="center", transform=ax.transAxes)
-        return
-
-    x = np.array(valid_budgets)
-    f0_m = np.array(f0_means)
-    f0_s = np.array(f0_stds)
-    ar_m = np.array(ar_means)
-    ar_s = np.array(ar_stds)
-
-    ax.fill_between(x, f0_m - f0_s, f0_m + f0_s, alpha=0.15, color="tab:gray")
-    ax.fill_between(x, ar_m - ar_s, ar_m + ar_s, alpha=0.15, color="tab:blue")
-    ax.plot(x, f0_m, "o--", color="tab:gray", label="PixNav (F0)", linewidth=2, markersize=6)
-    ax.plot(x, ar_m, "s-", color="tab:blue", label="RecNav", linewidth=2, markersize=6)
-
-    # Per-seed scatter
-    for b_idx, b in enumerate(valid_budgets):
-        for s in SEEDS:
-            if s in f0_data.get(b, {}):
-                ax.scatter(b, f0_data[b][s][metric], color="tab:gray", alpha=0.3, s=20, zorder=5)
-            if s in ar_data.get(b, {}):
-                ax.scatter(b, ar_data[b][s][metric], color="tab:blue", alpha=0.3, s=20, zorder=5)
-
-    ax.set_xlabel("Step Budget", fontsize=12)
-    ax.set_ylabel(metric, fontsize=12)
-    ax.set_xticks(BUDGETS)
-    ax.legend(fontsize=10)
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim(50, 550)
+def parse_variant_budget(run_name: str) -> tuple[str, int] | None:
+    match = BUDGET_RE.search(run_name)
+    if not match:
+        return None
+    budget = int(match.group(1))
+    variant = run_name[: match.start()]
+    return variant, budget
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--base", type=str, default=str(BASE))
-    parser.add_argument("--out", type=str, default="figure1_budget_curve.pdf")
+def collect(base: Path, variants: list[str]) -> dict[str, dict[int, list[dict[str, str]]]]:
+    data: dict[str, dict[int, list[dict[str, str]]]] = defaultdict(lambda: defaultdict(list))
+    for path in sorted(base.glob("*/seed_*/results.csv")):
+        parsed = parse_variant_budget(path.parent.parent.name)
+        if not parsed:
+            continue
+        variant, budget = parsed
+        if variant in variants:
+            data[variant][budget].extend(load_rows(path))
+    return data
+
+
+def plot_metric(ax, data, variants: list[str], metric: str) -> None:
+    for variant in variants:
+        budgets = sorted(data.get(variant, {}))
+        values = [mean_metric(data[variant][budget], metric) for budget in budgets]
+        if budgets:
+            ax.plot(budgets, values, marker="o", label=variant)
+    ax.set_xlabel("Step budget")
+    ax.set_ylabel(metric.upper())
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", type=Path, default=Path("artifacts/runs/experiments"))
+    parser.add_argument("--out", type=Path, default=Path("figures/budget_curve.pdf"))
+    parser.add_argument("--variants", default="f0,adarec_locked")
     args = parser.parse_args()
-    global BASE
-    BASE = Path(args.base)
 
-    # Collect data
-    f0_data = {b: get_metrics("f0", b) for b in BUDGETS}
-    ar_data = {b: get_metrics("adarec", b) for b in BUDGETS}
+    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+    data = collect(args.base, variants)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
-    plot_curve("SR", ax1, f0_data, ar_data)
-    plot_curve("SPL", ax2, f0_data, ar_data)
-    ax1.set_title("Success Rate vs Step Budget", fontsize=13)
-    ax2.set_title("SPL vs Step Budget", fontsize=13)
-    fig.suptitle("Budget-Performance Curve (HM3D ObjectNav)", fontsize=14, y=1.02)
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+    plot_metric(axes[0], data, variants, "success")
+    plot_metric(axes[1], data, variants, "spl")
     fig.tight_layout()
 
-    out_path = BASE / args.out
-    fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
-    print(f"Saved: {out_path}")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(args.out, dpi=180, bbox_inches="tight")
+    print(f"Saved {args.out}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

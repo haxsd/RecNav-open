@@ -1,4 +1,4 @@
-"""Canonical telemetry event helpers."""
+"""Canonical telemetry event helpers for R13 engineering stages."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 from ada_semnav.metrics_logger import MetricsLogger
 
-SCHEMA_VERSION = "v1"
+SCHEMA_VERSION = "r13_e1"
 EVENT_SCHEMA = "recoverability_telemetry_v1"
 
 CANONICAL_EVENT_TYPES = {

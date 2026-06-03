@@ -1,4 +1,4 @@
-"""Host adapters for RecNav experiments."""
+"""Host adapters used by staged R14 experiments."""
 
 from .pixnav_host import PixNavHost
 

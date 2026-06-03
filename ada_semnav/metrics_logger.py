@@ -10,17 +10,18 @@ from typing import Any
 class MetricsLogger:
     """Writes canonical experiment logs used by staged paper evaluation."""
 
-    def __init__(self, out_dir: str | Path) -> None:
+    def __init__(self, out_dir: str | Path, append: bool = False) -> None:
         self.out_dir = Path(out_dir).resolve()
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.step_trace_path = self.out_dir / "step_trace.jsonl"
         self.episode_summary_path = self.out_dir / "episode_summary.jsonl"
         self.events_path = self.out_dir / "events.jsonl"
         self.memory_snapshot_path = self.out_dir / "memory_snapshot.jsonl"
-        self._step_fp = self.step_trace_path.open("w", encoding="utf-8")
-        self._ep_fp = self.episode_summary_path.open("w", encoding="utf-8")
-        self._event_fp = self.events_path.open("w", encoding="utf-8")
-        self._memory_fp = self.memory_snapshot_path.open("w", encoding="utf-8")
+        mode = "a" if append else "w"
+        self._step_fp = self.step_trace_path.open(mode, encoding="utf-8")
+        self._ep_fp = self.episode_summary_path.open(mode, encoding="utf-8")
+        self._event_fp = self.events_path.open(mode, encoding="utf-8")
+        self._memory_fp = self.memory_snapshot_path.open(mode, encoding="utf-8")
 
     def close(self) -> None:
         self._step_fp.close()
