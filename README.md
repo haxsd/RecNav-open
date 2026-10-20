@@ -1,107 +1,53 @@
-# RecNav: Budget-Aware Recovery Augmentation for Mapless Object Navigation
+# RecNav：面向无地图 ObjectNav 的预算感知恢复增强
 
-This repository contains the public code release for RecNav, a recovery
-augmentation layer for mapless ObjectNav. RecNav runs on top of a matched
-PixNav-style base navigator and adds:
+[中文](README.md) · [English](README-EN.md)
 
-- a pose-free recovery gate,
-- compact recovery-oriented memory,
-- bounded macro-action recovery with closed-loop progress verification.
+> RecNav 是在匹配的 PixNav 风格基础导航器之上即插即用的恢复层：用姿态无关恢复门控、紧凑恢复记忆和有界宏动作恢复，减少无地图 ObjectNav 的迷路与卡死。
 
-The Python package is still named `ada_semnav` for compatibility with the
-current project code. The method name used in the paper and documentation is
-RecNav.
+本仓库是论文方法的公开代码发布；Python 包仍名为 `ada_semnav`（与项目现有代码兼容），论文与文档中的方法名是 RecNav。
 
-## What Is Included
+## 核心能力
 
-```text
-ada_semnav/          RecNav gate, memory, recovery, telemetry, and host code
-pixnav/              PixNav-side base navigator integration code
-scripts/core/        Dataset and Habitat smoke checks
-scripts/pixnav/      Main PixNav host evaluation and result utilities
-scripts/tools/       Environment, LLM, and significance-test utilities
-experiments/         Reproduction launch scripts
-docs/                Reproduction and artifact notes
-results/             Example CSV schema
-run.sh               Small top-level launcher
-```
+- **姿态无关恢复门控**：不依赖位姿真值判断何时进入恢复，适配无地图设置
+- **紧凑恢复记忆**：记录可恢复骨架（节点 / 边），供恢复阶段做有界搜索
+- **有界宏动作恢复**：宏动作候选排序 + 闭环进度验证，限制调用预算与重试次数
+- **预算与遥测**：统一记录 LLM 调用、探索步数、重试等预算事件，schema 固化
+- **锁定轨迹协议**：基础导航器先记录 `planner_trace.jsonl`，恢复变体重放到触发前，隔离 VLM 采样与规划调用差异
+- **可复现发布**：提供 E1 / E2 / E3 实验启动脚本、结果汇总、预算曲线与 McNemar 显著性检验工具
 
-The repository intentionally does not include HM3D/ObjectNav data, model
-checkpoints, large runtime outputs, paper drafts, or third-party dependency
-source trees.
+## 快速开始
 
-## Setup
-
-1. Create an environment. Habitat installation is platform-specific, so install
-   `habitat-sim` and `habitat-lab` following the official Habitat instructions
-   first.
+本仓库只含代码，不含 HM3D / ObjectNav 数据、模型权重与论文草稿。Habitat 需按官方说明先安装 `habitat-sim` / `habitat-lab`。
 
 ```bash
 conda create -n recnav python=3.10
 conda activate recnav
 pip install -r requirements.txt
+cp .env.example .env          # 填 Habitat 路径、模型路径与 API Key
 ```
 
-2. Install external vision modules under `pixnav/thirdparty/`.
+外部视觉模块装到 `pixnav/thirdparty/`（GroundingDINO、Segment Anything，用 `pip install -e` 安装），权重放到 `pixnav/checkpoints/`；HM3D 场景与 ObjectNav v2 episode 放到 `data/`。
+
+环境自检：
 
 ```bash
-mkdir -p pixnav/thirdparty
-git clone https://github.com/IDEA-Research/GroundingDINO.git pixnav/thirdparty/GroundingDINO
-git clone https://github.com/facebookresearch/segment-anything.git pixnav/thirdparty/segment-anything
-pip install -e pixnav/thirdparty/GroundingDINO
-pip install -e pixnav/thirdparty/segment-anything
-```
-
-3. Download checkpoints into `pixnav/checkpoints/`.
-
-```text
-pixnav/checkpoints/
-  GroundingDINO_SwinB_cfg.py
-  groundingdino_swinb_cogcoor.pth
-  sam_vit_h_4b8939.pth
-  navigator.pth
-```
-
-4. Prepare Habitat data under `data/`, or set paths in `.env`.
-
-```text
-data/
-  scene_datasets/hm3d/
-  datasets/objectnav/hm3d/v2/
-```
-
-5. Configure local paths and API credentials.
-
-```bash
-cp .env.example .env
-```
-
-## Quick Checks
-
-```bash
-./run.sh check-dataset
-./run.sh env-check
-./run.sh llm-smoke
-```
-
-For a small Habitat reset/step check:
-
-```bash
+./run.sh check-dataset   # 校验 HM3D / ObjectNav 目录结构
+./run.sh env-check       # 检查依赖、路径与权重
+./run.sh llm-smoke       # 测试 OpenAI 兼容模型连通性
 ./run.sh smoke-test --steps 10
 ```
 
-## Reproduction
+## 复现实验
 
-Run a baseline and a locked-trace RecNav variant:
+先跑 baseline 生成 planner trace，再用锁定轨迹跑 RecNav：
 
 ```bash
 bash experiments/run_experiment.sh f0 42 100 200
-
 export PLANNER_TRACE_SOURCE="$PWD/artifacts/runs/experiments/f0_s200/seed_42/planner_trace.jsonl"
 bash experiments/run_experiment.sh adarec_locked 42 100 200
 ```
 
-Run the paper-facing batches:
+论文批次（E2 需先跑，它为 E1 / E3 生成 baseline 轨迹）：
 
 ```bash
 bash experiments/launch_e2_budget_curve.sh
@@ -109,30 +55,21 @@ bash experiments/launch_e1_table1.sh
 bash experiments/launch_e3_ablation.sh
 ```
 
-Summarize outputs:
+结果汇总与统计：
 
 ```bash
 ./run.sh analyze-results --base artifacts/runs/experiments
 ./run.sh plot-budget --base artifacts/runs/experiments --out figures/budget_curve.pdf
-./run.sh mcnemar \
-  --baseline artifacts/runs/experiments/f0_s200/seed_42/results.csv \
-  --treatment artifacts/runs/experiments/adarec_locked_s200/seed_42/results.csv
+./run.sh mcnemar --baseline <baseline_csv> --treatment <treatment_csv>
 ```
 
-See `docs/reproduce.md` for the full protocol.
+## 文档
 
-## Locked-Trace Protocol
+- [docs/reproduce.md](docs/reproduce.md)：完整复现流程与实验变体
+- [docs/planner_trace_format.md](docs/planner_trace_format.md)：planner trace 格式
+- [docs/artifact_policy.md](docs/artifact_policy.md)：产物与数据管理约定
+- [scripts/README.md](scripts/README.md)：脚本入口清单
 
-The main comparison uses a locked-trace protocol. First, the base navigator
-records `planner_trace.jsonl`. Recovery variants replay the same planner trace
-until recovery is triggered. This isolates the effect of recovery from VLM
-sampling and planner-call differences.
+## 致谢与许可证
 
-## Acknowledgments
-
-This code builds on PixNav / Pixel Navigator as the base navigation policy and
-uses GroundingDINO and Segment Anything for open-vocabulary perception.
-
-## License
-
-See `LICENSE`.
+基础导航策略来自 PixNav / Pixel Navigator，开放词汇感知使用 GroundingDINO 与 Segment Anything。许可证：MIT（见 [LICENSE](LICENSE)）。
