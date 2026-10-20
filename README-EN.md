@@ -2,9 +2,9 @@
 
 [中文](README.md) · [English](README-EN.md)
 
-> RecNav is a plug-in recovery layer on top of a matched PixNav-style base navigator: a pose-free recovery gate, compact recovery memory and bounded macro-action recovery reduce getting lost and getting stuck in mapless ObjectNav.
+> A plug-in recovery layer for mapless ObjectNav: a pose-free gate, recovery memory and bounded macro-action recovery reduce getting lost and getting stuck.
 
-This repository is the public code release of the paper method. The Python package is still named `ada_semnav` for compatibility with the current project code; the method name used in the paper and documentation is RecNav.
+This repository is the public code release of the paper method; RecNav runs on top of a matched PixNav-style base navigator. The Python package is still named `ada_semnav` for compatibility with the current project code; the method name used in the paper and documentation is RecNav.
 
 ## Features
 

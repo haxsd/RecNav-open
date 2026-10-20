@@ -2,9 +2,9 @@
 
 [中文](README.md) · [English](README-EN.md)
 
-> RecNav 是在匹配的 PixNav 风格基础导航器之上即插即用的恢复层：用姿态无关恢复门控、紧凑恢复记忆和有界宏动作恢复，减少无地图 ObjectNav 的迷路与卡死。
+> 无地图 ObjectNav 的即插即用恢复层：姿态无关门控、恢复记忆与有界宏动作恢复，减少迷路与卡死。
 
-本仓库是论文方法的公开代码发布；Python 包仍名为 `ada_semnav`（与项目现有代码兼容），论文与文档中的方法名是 RecNav。
+本仓库是论文方法的公开代码发布：RecNav 运行在匹配的 PixNav 风格基础导航器之上。Python 包仍名为 `ada_semnav`（与项目现有代码兼容），论文与文档中的方法名是 RecNav。
 
 ## 核心能力
 
